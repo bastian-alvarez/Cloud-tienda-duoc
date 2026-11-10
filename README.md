@@ -105,7 +105,7 @@ El script compila y prueba los microservicios, sube los JAR, despliega CloudForm
 
 El frontend también se publica automáticamente en [GitHub Pages](https://bastian-alvarez.github.io/Cloud-tienda-duoc/) cuando se actualiza `main`. Pages aloja solo los archivos estáticos de Angular; autenticación, pedidos y procesamiento siguen dependiendo de Cognito y los servicios AWS desplegados. El flujo de GitHub Actions construye con `npm run build:github-pages`, configura la subruta del repositorio y publica un `404.html` para restaurar rutas de la aplicación.
 
-La plantilla CloudFormation agrega el origen de Pages a CORS de API Gateway y registra las URL de callback y cierre de sesión de Cognito. Para que el inicio de sesión desde Pages funcione, actualiza la pila `tiendaduoc-sqs-aurora` con `infra/deploy-aurora-sqs.sh` antes de usar esa versión del frontend. Amplify continúa disponible sin cambios.
+La primera vez, configura el repositorio en **Settings → Pages → Build and deployment → Source: GitHub Actions**. La plantilla CloudFormation agrega el origen de Pages a CORS de API Gateway y registra las URL de callback y cierre de sesión de Cognito; esos cambios ya deben estar desplegados en la pila `tiendaduoc-sqs-aurora` antes de usar esa versión del frontend. Amplify continúa disponible sin cambios.
 
 Abre la URL **Frontend AWS Amplify** que imprime el script y registra un usuario Cognito de prueba. Los endpoints de administración SQS son `GET/POST /api/admin/queues` y `DELETE /api/admin/queues/{queueName}`. Solo los usuarios del grupo Cognito `QueueAdministrators` pueden usarlos. Tras desplegar, agrega explícitamente a tu usuario de prueba a ese grupo desde Cognito; el registro normal no concede privilegios administrativos.
 
