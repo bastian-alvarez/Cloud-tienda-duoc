@@ -3,6 +3,10 @@ import { BehaviorSubject } from 'rxjs';
 import { User, UserManager } from 'oidc-client-ts';
 import { environment } from './environment';
 
+const appBaseUrl = new URL(document.baseURI);
+const appBasePath = appBaseUrl.pathname;
+const appRootUrl = `${appBaseUrl.origin}${appBasePath === '/' ? '' : appBasePath.replace(/\/$/, '')}`;
+
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly manager = new UserManager({
@@ -10,17 +14,17 @@ export class AuthService {
     client_id: environment.oidcClientId,
     response_type: 'code',
     scope: 'openid profile email',
-    redirect_uri: `${window.location.origin}/auth/callback`,
-    post_logout_redirect_uri: window.location.origin,
+    redirect_uri: new URL('auth/callback', document.baseURI).toString(),
+    post_logout_redirect_uri: appRootUrl,
     automaticSilentRenew: true,
   });
   private readonly currentUser = new BehaviorSubject<User | null>(null);
   readonly user$ = this.currentUser.asObservable();
 
   async initialize(): Promise<void> {
-    if (window.location.pathname === '/auth/callback') {
+    if (window.location.pathname.endsWith('/auth/callback')) {
       await this.manager.signinRedirectCallback();
-      window.history.replaceState({}, document.title, '/');
+      window.history.replaceState({}, document.title, appBasePath);
     }
     this.currentUser.next(await this.manager.getUser());
     this.manager.events.addUserLoaded((user) => this.currentUser.next(user));
@@ -40,7 +44,7 @@ export class AuthService {
       await this.manager.removeUser();
       const logoutUrl = new URL(environment.oidcLogoutEndpoint);
       logoutUrl.searchParams.set('client_id', environment.oidcClientId);
-      logoutUrl.searchParams.set('logout_uri', window.location.origin);
+      logoutUrl.searchParams.set('logout_uri', appRootUrl);
       window.location.assign(logoutUrl.toString());
       return;
     }

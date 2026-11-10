@@ -492,9 +492,11 @@ Resources:
       CallbackURLs:
         - !Sub '${FrontendOrigin}/auth/callback'
         - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}/auth/callback'
+        - https://bastian-alvarez.github.io/Cloud-tienda-duoc/auth/callback
       LogoutURLs:
         - !Ref FrontendOrigin
         - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}'
+        - https://bastian-alvarez.github.io/Cloud-tienda-duoc
 
   CognitoUserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
@@ -531,6 +533,7 @@ Resources:
         AllowOrigins:
           - !Ref FrontendOrigin
           - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}'
+          - https://bastian-alvarez.github.io
         AllowMethods: [GET, POST, DELETE, OPTIONS]
         AllowHeaders: [Authorization, Content-Type]
         MaxAge: 3600

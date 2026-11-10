@@ -48,6 +48,16 @@
                 }
               ],
               "outputHashing": "all"
+            },
+            "github-pages": {
+              "baseHref": "/Cloud-tienda-duoc/",
+              "fileReplacements": [
+                {
+                  "replace": "src/app/environment.ts",
+                  "with": "src/app/environment.github-pages.ts"
+                }
+              ],
+              "outputHashing": "all"
             }
           },
           "defaultConfiguration": "production"
@@ -63,6 +73,9 @@
             },
             "aws": {
               "buildTarget": "tiendaduoc-web:build:aws"
+            },
+            "github-pages": {
+              "buildTarget": "tiendaduoc-web:build:github-pages"
             }
           },
           "defaultConfiguration": "development"

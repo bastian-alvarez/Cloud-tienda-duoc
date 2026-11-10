@@ -6,7 +6,8 @@
     "start": "ng serve --proxy-config proxy.conf.json",
     "start:aws": "ng serve --configuration=aws",
     "build": "ng build",
-    "build:aws": "ng build --configuration=aws"
+    "build:aws": "ng build --configuration=aws",
+    "build:github-pages": "ng build --configuration=github-pages"
   },
   "dependencies": {
     "@angular/common": "^20.3.0",
