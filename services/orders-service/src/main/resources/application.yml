@@ -1,0 +1,48 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: orders-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/tiendaduoc?currentSchema=orders}
+    username: ${DB_USERNAME:tienda}
+    password: ${DB_PASSWORD:tienda_local}
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:orders}
+        hbm2ddl:
+          create_namespaces: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/tiendaduoc}
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  cors:
+    allowed-origin: ${FRONTEND_ORIGIN:http://localhost:4200}
+
+cloud:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+    sqs-endpoint: ${SQS_ENDPOINT_URL:http://localhost:4566}
+
+tienda:
+  aws:
+    payment-queue-url: ${PAYMENT_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-payment}
+    inventory-queue-url: ${INVENTORY_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-inventory}
+    notification-queue-url: ${NOTIFICATION_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-notifications}

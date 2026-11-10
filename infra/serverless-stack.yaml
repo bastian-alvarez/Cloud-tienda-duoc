@@ -1,0 +1,309 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TiendaDuoc serverless API with API Gateway, Cognito, Java Lambda, DynamoDB, SQS, SNS and S3.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: Email address for order notifications and the DLQ alarm.
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:4200
+    Description: Exact origin serving the frontend; do not include a trailing slash.
+  LambdaCodeBucket:
+    Type: String
+  LambdaCodeKey:
+    Type: String
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Existing AWS Academy execution role ARN used by both Lambda functions.
+
+Resources:
+  OrdersDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-orders-dlq'
+      SqsManagedSseEnabled: true
+
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-orders'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-notifications'
+
+  NotificationEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref NotificationTopic
+
+  ReceiptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-orders'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AWS::StackName}-web'
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub '${FrontendOrigin}/auth/callback'
+      LogoutURLs:
+        - !Ref FrontendOrigin
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${AWS::StackName}-${AWS::AccountId}'
+      UserPoolId: !Ref CognitoUserPool
+
+  OrdersApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-orders-api'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.lambda.OrdersApiHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 30
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          ORDERS_TABLE_NAME: !Ref OrdersTable
+          ORDERS_QUEUE_URL: !Ref OrdersQueue
+
+  EmailLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-email-receipt'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.lambda.EmailReceiptHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 30
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          RECEIPTS_BUCKET: !Ref ReceiptsBucket
+          NOTIFICATION_TOPIC_ARN: !Ref NotificationTopic
+          ORDERS_TABLE_NAME: !Ref OrdersTable
+
+  OrdersLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref EmailLambda
+      EventSourceArn: !GetAtt OrdersQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  OrdersHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-orders-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref FrontendOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        MaxAge: 3600
+
+  CognitoJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      Name: cognito-jwt
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Audience:
+          - !Ref CognitoUserPoolClient
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+
+  OrdersApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OrdersApiLambda.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+
+  CreateOrderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'POST /api/orders'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes:
+        - openid
+      Target: !Sub 'integrations/${OrdersApiIntegration}'
+
+  ListOrdersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'GET /api/orders'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes:
+        - openid
+      Target: !Sub 'integrations/${OrdersApiIntegration}'
+
+  FindOrderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'GET /api/orders/{id}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes:
+        - openid
+      Target: !Sub 'integrations/${OrdersApiIntegration}'
+
+  OrdersHttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  OrdersApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OrdersApiLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersHttpApi}/*/*/*'
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-orders-dlq-not-empty'
+      AlarmDescription: Activates when an order reaches the SQS dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt OrdersDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref NotificationTopic
+
+Outputs:
+  ApiEndpoint:
+    Value: !GetAtt OrdersHttpApi.ApiEndpoint
+  CognitoIssuer:
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+  CognitoClientId:
+    Value: !Ref CognitoUserPoolClient
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  CognitoHostedUiDomain:
+    Value: !Sub 'https://${CognitoUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+  CognitoLoginUrl:
+    Value: !Sub 'https://${CognitoUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${CognitoUserPoolClient}&response_type=code&scope=openid+email+profile&redirect_uri=${FrontendOrigin}/auth/callback'
+  OrdersQueueUrl:
+    Value: !Ref OrdersQueue
+  OrdersDlqUrl:
+    Value: !Ref OrdersDeadLetterQueue
+  ReceiptBucketName:
+    Value: !Ref ReceiptsBucket
+  NotificationTopicArn:
+    Value: !Ref NotificationTopic
+  DeadLetterAlarmName:
+    Value: !Ref DeadLetterAlarm
+  OrdersTableName:
+    Value: !Ref OrdersTable
+  LambdaArtifactBucketName:
+    Value: !Ref LambdaCodeBucket

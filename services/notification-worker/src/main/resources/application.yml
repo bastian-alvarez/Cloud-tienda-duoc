@@ -1,0 +1,21 @@
+server:
+  port: ${SERVER_PORT:8085}
+
+spring:
+  application:
+    name: notification-worker
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+cloud:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+    sqs-endpoint: ${SQS_ENDPOINT_URL:http://localhost:4566}
+
+tienda:
+  aws:
+    notification-queue-url: ${NOTIFICATION_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-notifications}

@@ -1,0 +1,56 @@
+@baseUrl = http://localhost:8081
+@accessToken = pega_aqui_el_access_token
+
+### Cambia baseUrl al endpoint API Gateway para el modo AWS serverless y usa un token de Cognito.
+### Pedido correcto: local termina en COMPLETADO; AWS serverless termina en PAGADO
+# @name createOrder
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "customerEmail": "alumno@example.com",
+  "sku": "POLERA-DUOC-M",
+  "quantity": 2,
+  "unitPrice": 9990
+}
+
+### Consultar el pedido: reemplaza {id} por el id devuelto arriba
+GET {{baseUrl}}/api/orders/{id}
+Authorization: Bearer {{accessToken}}
+
+### Error esperado: HTTP 400 por correo inválido
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "customerEmail": "correo-invalido",
+  "sku": "POLERA-DUOC-M",
+  "quantity": 2,
+  "unitPrice": 9990
+}
+
+### DLQ SQS local: se envía a las DLQ de pago e inventario
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "customerEmail": "alumno@example.com",
+  "sku": "falla",
+  "quantity": 1,
+  "unitPrice": 1000
+}
+
+### DLQ SQS serverless: la Lambda falla intencionalmente y agota los reintentos
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "customerEmail": "alumno@example.com",
+  "sku": "FALLA-123",
+  "quantity": 1,
+  "unitPrice": 1000
+}

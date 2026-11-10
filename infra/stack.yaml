@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TiendaDuoc AWS extension for SQS, Lambda, SNS, S3, RDS and CloudWatch.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: Email address for order notifications and the DLQ alarm.
+  DbPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    Description: Master password for the PostgreSQL RDS instance.
+  ClientCidr:
+    Type: String
+    Description: Public IPv4 CIDR allowed to connect to PostgreSQL.
+  DefaultVpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaCodeBucket:
+    Type: String
+  LambdaCodeKey:
+    Type: String
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Existing AWS Academy execution role ARN for the Lambda.
+
+Resources:
+  OrdersDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-orders-dlq'
+      SqsManagedSseEnabled: true
+
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-orders'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  PaymentResultsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment-results-dlq'
+      SqsManagedSseEnabled: true
+
+  PaymentResultsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment-results'
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PaymentResultsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-notifications'
+
+  PaymentStatusTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-payment-status'
+
+  NotificationEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref NotificationTopic
+
+  PaymentResultsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref PaymentResultsQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt PaymentResultsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref PaymentStatusTopic
+
+  PaymentResultsSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: PaymentResultsQueuePolicy
+    Properties:
+      Protocol: sqs
+      TopicArn: !Ref PaymentStatusTopic
+      Endpoint: !GetAtt PaymentResultsQueue.Arn
+      RawMessageDelivery: true
+
+  ReceiptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  EmailLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-email-receipt'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.lambda.EmailReceiptHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 30
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          RECEIPTS_BUCKET: !Ref ReceiptsBucket
+          NOTIFICATION_TOPIC_ARN: !Ref NotificationTopic
+          PAYMENT_STATUS_TOPIC_ARN: !Ref PaymentStatusTopic
+
+  OrdersLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref EmailLambda
+      EventSourceArn: !GetAtt OrdersQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL only from the provisioning client IP.
+      VpcId: !Ref DefaultVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref ClientCidr
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Public subnets for the academic demo database.
+      SubnetIds: !Ref SubnetIds
+
+  OrdersDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: postgres
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: tiendaduoc
+      MasterUsername: tienda
+      MasterUserPassword: !Ref DbPassword
+      PubliclyAccessible: true
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DbSecurityGroup.GroupId
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-orders-dlq-not-empty'
+      AlarmDescription: Activates when an order reaches the SQS dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt OrdersDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref NotificationTopic
+
+Outputs:
+  OrdersQueueUrl:
+    Value: !Ref OrdersQueue
+  OrdersDlqUrl:
+    Value: !Ref OrdersDeadLetterQueue
+  PaymentResultsQueueUrl:
+    Value: !Ref PaymentResultsQueue
+  ReceiptBucketName:
+    Value: !Ref ReceiptsBucket
+  NotificationTopicArn:
+    Value: !Ref NotificationTopic
+  DeadLetterAlarmName:
+    Value: !Ref DeadLetterAlarm
+  LambdaArtifactBucketName:
+    Value: !Ref LambdaCodeBucket
+  DatabaseUrl:
+    Value: !Sub 'jdbc:postgresql://${OrdersDatabase.Endpoint.Address}:${OrdersDatabase.Endpoint.Port}/tiendaduoc?sslmode=require'
+  DatabaseUsername:
+    Value: tienda

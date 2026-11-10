@@ -1,0 +1,72 @@
+<mxfile host="app.diagrams.net" modified="2026-11-02T23:30:00.000Z" agent="Copilot" version="24.7.17">
+  <diagram id="tiendaduoc-architecture" name="Arquitectura">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="frontend" value="Angular 20&#xa;OIDC / PKCE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="40" y="350" width="160" height="70" as="geometry"/></mxCell>
+        <mxCell id="orders" value="orders-service&#xa;REST / PostgreSQL&#xa;perfil local o aws" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="270" y="340" width="210" height="90" as="geometry"/></mxCell>
+        <mxCell id="localdb" value="PostgreSQL local" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="310" y="490" width="130" height="70" as="geometry"/></mxCell>
+        <mxCell id="rabbit" value="RabbitMQ&#xa;topic exchange + DLX/DLQ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="570" y="330" width="190" height="90" as="geometry"/></mxCell>
+        <mxCell id="payment" value="payment-worker&#xa;resultado de pago" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="850" y="220" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="inventory" value="inventory-worker&#xa;reserva de inventario" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="850" y="340" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="notification" value="notification-worker&#xa;notificación simulada" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="850" y="460" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="admin" value="rabbit-admin-service&#xa;REST de topología" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="570" y="510" width="190" height="75" as="geometry"/></mxCell>
+        <mxCell id="awsbox" value="AWS Academy · flujo PostgreSQL anterior (legacy)" style="swimlane;html=1;rounded=1;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1"><mxGeometry x="250" y="650" width="1120" height="260" as="geometry"/></mxCell>
+        <mxCell id="awssqs" value="SQS pedidos&#xa;redrive → DLQ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="awsbox"><mxGeometry x="40" y="80" width="150" height="70" as="geometry"/></mxCell>
+        <mxCell id="lambda" value="Lambda Java 21&#xa;procesa / falla veneno" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="awsbox"><mxGeometry x="270" y="80" width="180" height="70" as="geometry"/></mxCell>
+        <mxCell id="s3" value="S3&#xa;comprobantes privados" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="awsbox"><mxGeometry x="530" y="55" width="150" height="70" as="geometry"/></mxCell>
+        <mxCell id="sns" value="SNS&#xa;email / estado de pago" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="awsbox"><mxGeometry x="530" y="150" width="170" height="65" as="geometry"/></mxCell>
+        <mxCell id="rds" value="RDS PostgreSQL&#xa;orders-service" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="awsbox"><mxGeometry x="850" y="55" width="170" height="70" as="geometry"/></mxCell>
+        <mxCell id="results" value="SQS resultados&#xa;poller → PAGADO" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="awsbox"><mxGeometry x="850" y="150" width="170" height="65" as="geometry"/></mxCell>
+        <mxCell id="dlq" value="SQS DLQ +&#xa;CloudWatch Alarm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="awsbox"><mxGeometry x="1080" y="90" width="150" height="75" as="geometry"/></mxCell>
+        <mxCell id="e1" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="frontend" target="orders"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" value="persist" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="orders" target="localdb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" value="evento pedido" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="orders" target="rabbit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="rabbit" target="payment"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="rabbit" target="inventory"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="rabbit" target="notification"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" value="resultados / DLQ" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="payment" target="orders"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" value="resultado inventario" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="inventory" target="orders"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="orders" target="awssqs"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="0" as="offset"/></mxGeometry></mxCell>
+        <mxCell id="e10" style="endArrow=block;html=1;rounded=0;" edge="1" parent="awsbox" source="awssqs" target="lambda"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="endArrow=block;html=1;rounded=0;" edge="1" parent="awsbox" source="lambda" target="s3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="endArrow=block;html=1;rounded=0;" edge="1" parent="awsbox" source="lambda" target="sns"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" style="endArrow=block;html=1;rounded=0;" edge="1" parent="awsbox" source="sns" target="results"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" style="endArrow=block;html=1;rounded=0;" edge="1" parent="awsbox" source="results" target="rds"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e15" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="awsbox" source="awssqs" target="dlq"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="aws-serverless" name="AWS serverless">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="web" value="Angular 20&#xa;localhost:4200" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="50" y="330" width="170" height="75" as="geometry"/></mxCell>
+        <mxCell id="cognito" value="Amazon Cognito&#xa;User Pool · OIDC/PKCE&#xa;emite JWT de usuario" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="50" y="150" width="190" height="95" as="geometry"/></mxCell>
+        <mxCell id="apigw" value="API Gateway&#xa;HTTP API + JWT authorizer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="340" y="320" width="200" height="95" as="geometry"/></mxCell>
+        <mxCell id="ordersapi" value="Lambda Java 21&#xa;OrdersApiHandler&#xa;validación + API REST" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="650" y="320" width="210" height="95" as="geometry"/></mxCell>
+        <mxCell id="dynamodb" value="DynamoDB&#xa;Bajo demanda · cifrado&#xa;sin VPC ni instancias" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="1040" y="300" width="220" height="110" as="geometry"/></mxCell>
+        <mxCell id="queue" value="Amazon SQS&#xa;orders queue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="650" y="520" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="worker" value="Lambda Java 21&#xa;EmailReceiptHandler&#xa;recibo + actualización" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="960" y="500" width="210" height="95" as="geometry"/></mxCell>
+        <mxCell id="receipts" value="Amazon S3&#xa;comprobantes privados" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="1320" y="450" width="180" height="85" as="geometry"/></mxCell>
+        <mxCell id="sns" value="Amazon SNS&#xa;notificación email" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="1320" y="580" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="dlq" value="SQS DLQ&#xa;CloudWatch Alarm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="390" y="570" width="180" height="75" as="geometry"/></mxCell>
+        <mxCell id="artifact" value="Amazon S3&#xa;JAR de Lambda (artefacto)&#xa;no ejecuta el backend" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1"><mxGeometry x="720" y="120" width="220" height="95" as="geometry"/></mxCell>
+        <mxCell id="token" value="JWT" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="cognito" target="apigw"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="request" value="HTTPS /api/orders" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="web" target="apigw"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="invoke" value="proxy integration" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="apigw" target="ordersapi"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="api-db" value="crear / consultar" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="ordersapi" target="dynamodb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="api-sqs" value="pedido" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="ordersapi" target="queue"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="trigger" value="evento SQS" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="queue" target="worker"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="worker-db" value="status PAGADO" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="worker" target="dynamodb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="worker-s3" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="worker" target="receipts"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="worker-sns" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="worker" target="sns"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="redrive" value="3 intentos" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="queue" target="dlq"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="artifact-api" value="despliega código" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="artifact" target="ordersapi"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="artifact-worker" value="despliega código" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="artifact" target="worker"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

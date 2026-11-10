@@ -1,0 +1,35 @@
+server:
+  port: ${SERVER_PORT:8082}
+
+spring:
+  application:
+    name: payment-worker
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/tiendaduoc?currentSchema=payment}
+    username: ${DB_USERNAME:tienda}
+    password: ${DB_PASSWORD:tienda_local}
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:payment}
+        hbm2ddl:
+          create_namespaces: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+cloud:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+    sqs-endpoint: ${SQS_ENDPOINT_URL:http://localhost:4566}
+
+tienda:
+  aws:
+    payment-queue-url: ${PAYMENT_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-payment}
+    payment-results-queue-url: ${PAYMENT_RESULTS_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-payment-results}

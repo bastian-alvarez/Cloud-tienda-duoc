@@ -1,0 +1,684 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TiendaDuoc serverless deployment with Aurora PostgreSQL, SQS, Lambda, API Gateway, and Cognito; no EC2.
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Existing AWS Academy LabRole used by Lambda.
+  ArtifactBucketName:
+    Type: String
+  NotificationEmail:
+    Type: String
+    Description: Confirmed email subscriber for academic order notifications.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  OrdersJarKey:
+    Type: String
+    Default: services/orders-service/orders-service-1.0.0-SNAPSHOT-aws.jar
+  PaymentJarKey:
+    Type: String
+    Default: services/payment-worker/payment-worker-1.0.0-SNAPSHOT-aws.jar
+  InventoryJarKey:
+    Type: String
+    Default: services/inventory-worker/inventory-worker-1.0.0-SNAPSHOT-aws.jar
+  NotificationJarKey:
+    Type: String
+    Default: services/notification-worker/notification-worker-1.0.0-SNAPSHOT-aws.jar
+  QueueAdminJarKey:
+    Type: String
+    Default: services/queue-admin-service/queue-admin-service-1.0.0-SNAPSHOT-aws.jar
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two subnets in distinct Availability Zones for Aurora.
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:4200
+    Description: Browser origin for CORS and Cognito callbacks, without a trailing slash.
+  AuroraInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    AllowedValues:
+      - db.t3.medium
+    Description: Smallest Aurora PostgreSQL class supported by this Learner Lab in us-east-1.
+
+Resources:
+  AuroraCredentials:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AWS::StackName}-aurora-credentials'
+      Description: Generated credentials for TiendaDuoc Aurora PostgreSQL.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"tiendaduoc_admin"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludePunctuation: true
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda egress to Aurora PostgreSQL and SQS interface endpoint.
+      VpcId: !Ref VpcId
+
+  AuroraSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora accepts PostgreSQL connections only from project Lambdas.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  SqsEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS from project Lambdas to the private SQS endpoint.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  SqsVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs'
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Select [0, !Ref SubnetIds]
+      SecurityGroupIds:
+        - !Ref SqsEndpointSecurityGroup
+
+  AuroraSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for the TiendaDuoc Aurora cluster.
+      SubnetIds: !Ref SubnetIds
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBClusterIdentifier: !Sub '${AWS::StackName}-aurora'
+      Engine: aurora-postgresql
+      EngineVersion: '17.9'
+      DatabaseName: tiendaduoc
+      MasterUsername: tiendaduoc_admin
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt AuroraSecurityGroup.GroupId
+      StorageEncrypted: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+
+  AuroraWriter:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-writer'
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: !Ref AuroraInstanceClass
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      AutoMinorVersionUpgrade: true
+
+  PaymentDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment-dlq'
+      SqsManagedSseEnabled: true
+
+  PaymentQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PaymentDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  InventoryDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-dlq'
+      SqsManagedSseEnabled: true
+
+  InventoryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  NotificationsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-notifications-dlq'
+      SqsManagedSseEnabled: true
+
+  NotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-notifications'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  OrderNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-order-notifications'
+      DisplayName: TiendaDuoc order confirmations
+
+  OrderNotificationsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref OrderNotificationsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref LambdaExecutionRoleArn
+            Action: sns:Publish
+            Resource: !Ref OrderNotificationsTopic
+
+  OrderNotificationEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      TopicArn: !Ref OrderNotificationsTopic
+      Endpoint: !Ref NotificationEmail
+
+  PaymentResultsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment-results-dlq'
+      SqsManagedSseEnabled: true
+
+  PaymentResultsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-payment-results'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PaymentResultsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  InventoryResultsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-results-dlq'
+      SqsManagedSseEnabled: true
+
+  InventoryResultsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-results'
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryResultsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  OrdersApiFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-orders-api'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.orders.aws.OrdersApiLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 28
+      MemorySize: 1536
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref OrdersJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          DB_URL: !Sub 'jdbc:postgresql://${AuroraCluster.Endpoint.Address}:5432/tiendaduoc?sslmode=require&currentSchema=orders'
+          DB_SCHEMA: orders
+          DB_USERNAME: tiendaduoc_admin
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+          JPA_DDL_AUTO: update
+          PAYMENT_QUEUE_URL: !Ref PaymentQueue
+          INVENTORY_QUEUE_URL: !Ref InventoryQueue
+          NOTIFICATION_QUEUE_URL: !Ref NotificationsQueue
+          SQS_ENDPOINT_URL: ''
+          OIDC_ISSUER_URI: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+          FRONTEND_ORIGIN: !Ref FrontendOrigin
+
+  PaymentFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-payment-worker'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.payment.aws.PaymentSqsLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 60
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref PaymentJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          DB_URL: !Sub 'jdbc:postgresql://${AuroraCluster.Endpoint.Address}:5432/tiendaduoc?sslmode=require&currentSchema=payment'
+          DB_SCHEMA: payment
+          DB_USERNAME: tiendaduoc_admin
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+          JPA_DDL_AUTO: update
+          PAYMENT_RESULTS_QUEUE_URL: !Ref PaymentResultsQueue
+          SQS_ENDPOINT_URL: ''
+
+  InventoryFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-inventory-worker'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.inventory.aws.InventorySqsLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 60
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref InventoryJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          DB_URL: !Sub 'jdbc:postgresql://${AuroraCluster.Endpoint.Address}:5432/tiendaduoc?sslmode=require&currentSchema=inventory'
+          DB_SCHEMA: inventory
+          DB_USERNAME: tiendaduoc_admin
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+          JPA_DDL_AUTO: update
+          INVENTORY_RESULTS_QUEUE_URL: !Ref InventoryResultsQueue
+          SQS_ENDPOINT_URL: ''
+
+  NotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-notification-worker'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.notification.aws.NotificationSqsLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 30
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref NotificationJarKey
+      Environment:
+        Variables:
+          NOTIFICATION_TOPIC_ARN: !Ref OrderNotificationsTopic
+
+  PaymentResultFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-payment-results'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.orders.aws.PaymentResultLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 28
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref OrdersJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          DB_URL: !Sub 'jdbc:postgresql://${AuroraCluster.Endpoint.Address}:5432/tiendaduoc?sslmode=require&currentSchema=orders'
+          DB_SCHEMA: orders
+          DB_USERNAME: tiendaduoc_admin
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+          JPA_DDL_AUTO: update
+          PAYMENT_QUEUE_URL: !Ref PaymentQueue
+          INVENTORY_QUEUE_URL: !Ref InventoryQueue
+          NOTIFICATION_QUEUE_URL: !Ref NotificationsQueue
+          PAYMENT_RESULTS_QUEUE_URL: !Ref PaymentResultsQueue
+          INVENTORY_RESULTS_QUEUE_URL: !Ref InventoryResultsQueue
+          SQS_ENDPOINT_URL: ''
+
+  InventoryResultFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-inventory-results'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.orders.aws.InventoryResultLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 28
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref OrdersJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          DB_URL: !Sub 'jdbc:postgresql://${AuroraCluster.Endpoint.Address}:5432/tiendaduoc?sslmode=require&currentSchema=orders'
+          DB_SCHEMA: orders
+          DB_USERNAME: tiendaduoc_admin
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${AuroraCredentials}:SecretString:password}}'
+          JPA_DDL_AUTO: update
+          SQS_ENDPOINT_URL: ''
+
+  QueueAdminFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsVpcEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-queue-admin'
+      Runtime: java21
+      Handler: cl.duoc.cloudnative.admin.aws.QueueAdminLambdaHandler::handleRequest
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 28
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref QueueAdminJarKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+      Environment:
+        Variables:
+          SQS_ENDPOINT_URL: ''
+
+  PaymentEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref PaymentFunction
+      EventSourceArn: !GetAtt PaymentQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  InventoryEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref InventoryFunction
+      EventSourceArn: !GetAtt InventoryQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  NotificationEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref NotificationFunction
+      EventSourceArn: !GetAtt NotificationsQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  PaymentResultsEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref PaymentResultFunction
+      EventSourceArn: !GetAtt PaymentResultsQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  InventoryResultsEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref InventoryResultFunction
+      EventSourceArn: !GetAtt InventoryResultsQueue.Arn
+      BatchSize: 1
+      Enabled: true
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  QueueAdministratorsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: QueueAdministrators
+      Description: Users authorized to administer SQS queues.
+      UserPoolId: !Ref CognitoUserPool
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AWS::StackName}-web'
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub '${FrontendOrigin}/auth/callback'
+        - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}/auth/callback'
+      LogoutURLs:
+        - !Ref FrontendOrigin
+        - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}'
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${AWS::StackName}-${AWS::AccountId}'
+      UserPoolId: !Ref CognitoUserPool
+
+  FrontendApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub '${AWS::StackName}-frontend'
+      Platform: WEB
+      CustomRules:
+        - Source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|ttf|map|json)$)([^.]+$)/>'
+          Target: /index.html
+          Status: '200'
+          Condition: ''
+
+  FrontendBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt FrontendApp.AppId
+      BranchName: main
+      Description: Production branch for the TiendaDuoc Angular frontend.
+      EnableAutoBuild: false
+      Stage: PRODUCTION
+
+  OrdersHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref FrontendOrigin
+          - !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}'
+        AllowMethods: [GET, POST, DELETE, OPTIONS]
+        AllowHeaders: [Authorization, Content-Type]
+        MaxAge: 3600
+
+  CognitoJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      Name: cognito-jwt
+      AuthorizerType: JWT
+      IdentitySource: ['$request.header.Authorization']
+      JwtConfiguration:
+        Audience: [!Ref CognitoUserPoolClient]
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+
+  OrdersIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OrdersApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 28000
+
+  QueueAdminIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt QueueAdminFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 28000
+
+  CreateOrderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'POST /api/orders'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${OrdersIntegration}'
+
+  ListOrdersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'GET /api/orders'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${OrdersIntegration}'
+
+  FindOrderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'GET /api/orders/{id}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${OrdersIntegration}'
+
+  ListQueuesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'GET /api/admin/queues'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${QueueAdminIntegration}'
+
+  CreateQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'POST /api/admin/queues'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${QueueAdminIntegration}'
+
+  DeleteQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      RouteKey: 'DELETE /api/admin/queues/{queueName}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoJwtAuthorizer
+      AuthorizationScopes: [openid]
+      Target: !Sub 'integrations/${QueueAdminIntegration}'
+
+  OrdersHttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref OrdersHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  OrdersApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OrdersApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersHttpApi}/*/*/*'
+
+  QueueAdminInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref QueueAdminFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersHttpApi}/*/*/*'
+
+Outputs:
+  ApiEndpoint:
+    Value: !GetAtt OrdersHttpApi.ApiEndpoint
+  FrontendUrl:
+    Value: !Sub 'https://${FrontendBranch.BranchName}.${FrontendApp.DefaultDomain}'
+  FrontendAmplifyAppId:
+    Value: !GetAtt FrontendApp.AppId
+  FrontendAmplifyBranch:
+    Value: !GetAtt FrontendBranch.BranchName
+  CognitoIssuer:
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}'
+  CognitoClientId:
+    Value: !Ref CognitoUserPoolClient
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  CognitoHostedUiDomain:
+    Value: !Sub 'https://${CognitoUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+  AuroraEndpoint:
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucketName
+  PaymentQueueUrl:
+    Value: !Ref PaymentQueue
+  PaymentDeadLetterQueueUrl:
+    Value: !Ref PaymentDeadLetterQueue
+  InventoryQueueUrl:
+    Value: !Ref InventoryQueue
+  InventoryDeadLetterQueueUrl:
+    Value: !Ref InventoryDeadLetterQueue
+  NotificationsQueueUrl:
+    Value: !Ref NotificationsQueue
+  OrderNotificationsTopicArn:
+    Value: !Ref OrderNotificationsTopic
+  NotificationsDeadLetterQueueUrl:
+    Value: !Ref NotificationsDeadLetterQueue

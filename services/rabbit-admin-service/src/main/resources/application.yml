@@ -1,0 +1,26 @@
+server:
+  port: ${SERVER_PORT:8084}
+
+spring:
+  application:
+    name: queue-admin-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/tiendaduoc}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  cors:
+    allowed-origin: ${FRONTEND_ORIGIN:http://localhost:4200}
+
+cloud:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+    sqs-endpoint: ${SQS_ENDPOINT_URL:http://localhost:4566}

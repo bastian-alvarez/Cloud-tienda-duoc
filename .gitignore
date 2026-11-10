@@ -1,0 +1,9 @@
+.env
+.idea/
+.vscode/
+**/target/
+**/node_modules/
+**/dist/
+**/.angular/
+frontend/src/app/environment.aws.ts
+*.log

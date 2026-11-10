@@ -1,0 +1,35 @@
+server:
+  port: ${SERVER_PORT:8083}
+
+spring:
+  application:
+    name: inventory-worker
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/tiendaduoc?currentSchema=inventory}
+    username: ${DB_USERNAME:tienda}
+    password: ${DB_PASSWORD:tienda_local}
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:inventory}
+        hbm2ddl:
+          create_namespaces: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+cloud:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+    sqs-endpoint: ${SQS_ENDPOINT_URL:http://localhost:4566}
+
+tienda:
+  aws:
+    inventory-queue-url: ${INVENTORY_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-inventory}
+    inventory-results-queue-url: ${INVENTORY_RESULTS_QUEUE_URL:http://localhost:4566/000000000000/tiendaduoc-inventory-results}
